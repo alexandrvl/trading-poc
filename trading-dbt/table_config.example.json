@@ -1,0 +1,38 @@
+{
+  "tables": [
+    {
+      "name": "assets",
+      "primary_key": "asset_id",
+      "fields": [
+        {"name": "asset_id", "type": "string", "required": true},
+        {"name": "asset_name", "type": "string"},
+        {"name": "technology", "type": "string"},
+        {"name": "nominal_power_kw", "type": "double"},
+        {"name": "latitude", "type": "double"},
+        {"name": "longitude", "type": "double"},
+        {"name": "zone_code", "type": "string"},
+        {"name": "turbine_model", "type": "string"},
+        {"name": "commissioning_date", "type": "timestamp"},
+        {"name": "last_modified", "type": "timestamp"},
+        {"name": "source_system", "type": "string"}
+      ]
+    },
+    {
+      "name": "emsys_telemetry",
+      "is_incremental": true,
+      "incremental_field": "ingested_at",
+      "fields": [
+        {"name": "telemetry_id", "type": "long"},
+        {"name": "asset_id", "type": "string"},
+        {"name": "event_ts", "type": "timestamp"},
+        {"name": "active_power_kw", "type": "double"},
+        {"name": "reactive_power_kvar", "type": "double"},
+        {"name": "turbine_status", "type": "string"},
+        {"name": "setpoint_limit_kw", "type": "double"},
+        {"name": "control_mode", "type": "string"},
+        {"name": "source_system", "type": "string"},
+        {"name": "ingested_at", "type": "timestamp"}
+      ]
+    }
+  ]
+}

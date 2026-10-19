@@ -1,0 +1,73 @@
+version: 2
+
+models:
+  - name: bv_asset_generation_15m
+    description: Telemetry integrated to the 15-minute market interval.
+    columns:
+      - name: hk_asset
+        tests: [not_null]
+      - name: interval_start
+        tests: [not_null]
+      - name: generation_mwh
+        tests: [not_null]
+  - name: pit_asset
+    description: Load-timestamp pointers for asset satellites at each billing snapshot.
+    columns:
+      - name: hk_asset
+        tests: [not_null]
+      - name: snapshot_ts
+        tests: [not_null]
+  - name: bv_asset_interval
+    description: Generation, P50 forecast, intraday baseline and availability for one asset interval.
+    columns:
+      - name: hk_asset
+        tests: [not_null]
+      - name: generation_mwh
+        tests: [not_null]
+  - name: bridge_portfolio_asset
+    description: Portfolio membership with effectivity.
+    columns:
+      - name: hk_portfolio
+        tests: [not_null]
+      - name: hk_asset
+        tests: [not_null]
+      - name: valid_from
+        tests: [not_null]
+  - name: bv_pro_rata_allocation
+    description: Portfolio wholesale revenue allocated by measured generation.
+    columns:
+      - name: allocated_revenue_eur
+        tests: [not_null]
+  - name: bv_imbalance_attribution
+    description: Portfolio imbalance cost allocated to assets that caused the deviation.
+    columns:
+      - name: imbalance_cost_eur
+        tests: [not_null]
+  - name: bv_balancing_revenue
+    description: aFRR, mFRR, FCR and capacity-market amounts at asset grain.
+    columns:
+      - name: hk_asset
+        tests: [not_null]
+  - name: bv_down_regulation
+    description: Energy lost during external curtailment and its mFRR-down compensation.
+    columns:
+      - name: lost_energy_mwh
+        tests: [not_null]
+  - name: bv_forecast_baseline
+    description: Latest Meteologica value per asset, ensemble type and target time.
+    columns:
+      - name: hk_asset
+        tests: [not_null]
+      - name: type_code
+        tests: [not_null]
+      - name: expected_power_kw
+        tests: [not_null]
+  - name: bv_asset_net_revenue
+    description: Asset internal billing after wholesale allocation, imbalance, reserves and curtailment.
+    columns:
+      - name: hk_asset
+        tests: [not_null]
+      - name: interval_start
+        tests: [not_null]
+      - name: net_revenue_eur
+        tests: [not_null]

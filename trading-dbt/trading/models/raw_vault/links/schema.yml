@@ -1,0 +1,30 @@
+version: 2
+
+models:
+  - name: link_portfolio_asset
+    description: Portfolio membership. Moves between portfolios are kept as separate links plus an effectivity satellite.
+    columns:
+      - name: hk_link_portfolio_asset
+        tests: [not_null, unique]
+      - name: hk_portfolio
+        tests: [not_null]
+      - name: hk_asset
+        tests: [not_null]
+  - name: link_order_portfolio
+    description: Order placed by a trading portfolio.
+    columns:
+      - name: hk_link_order_portfolio
+        tests: [not_null, unique]
+      - name: hk_order
+        tests: [not_null]
+      - name: hk_portfolio
+        tests: [not_null]
+  - name: link_order_market
+    description: Market on which an order was concluded.
+    columns:
+      - name: hk_link_order_market
+        tests: [not_null, unique]
+      - name: hk_order
+        tests: [not_null]
+      - name: hk_market
+        tests: [not_null]

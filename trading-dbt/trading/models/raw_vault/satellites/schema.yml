@@ -1,0 +1,74 @@
+version: 2
+
+models:
+  - name: sat_asset_details
+    description: Descriptive attributes of a physical asset.
+    columns:
+      - name: hk_asset
+        tests: [not_null]
+      - name: ldts
+        tests: [not_null]
+      - name: hashdiff
+        tests: [not_null]
+      - name: nominal_power_kw
+        tests: [not_null]
+  - name: sat_asset_emsys_telemetry
+    description: Append-only Emsys telemetry, partitioned by day of load timestamp.
+    columns:
+      - name: hk_asset
+        tests: [not_null]
+      - name: ldts
+        tests: [not_null]
+      - name: event_ts
+        tests: [not_null]
+      - name: active_power_kw
+        tests: [not_null]
+  - name: sat_asset_capacity_status
+    description: Availability, outage and derating used by the capacity market.
+    columns:
+      - name: hk_asset
+        tests: [not_null]
+      - name: ldts
+        tests: [not_null]
+      - name: declared_availability_mw
+        tests: [not_null]
+  - name: sat_asset_meteologica_forecast
+    description: Multi-active forecast satellite. Parallel ensembles share hk_asset and ldts.
+    columns:
+      - name: hk_asset
+        tests: [not_null]
+      - name: ldts
+        tests: [not_null]
+      - name: type_code
+        tests: [not_null]
+      - name: target_timestamp
+        tests: [not_null]
+      - name: expected_power_kw
+        tests: [not_null]
+  - name: sat_portfolio_details
+    description: Trading portfolio attributes.
+    columns:
+      - name: hk_portfolio
+        tests: [not_null]
+      - name: ldts
+        tests: [not_null]
+  - name: sat_order_periotheus
+    description: Price, volume and delivery window of a Periotheus order.
+    columns:
+      - name: hk_order
+        tests: [not_null]
+      - name: ldts
+        tests: [not_null]
+      - name: price_eur
+        tests: [not_null]
+      - name: volume_mw
+        tests: [not_null]
+  - name: sat_link_portfolio_asset
+    description: Effectivity of a portfolio-asset relationship.
+    columns:
+      - name: hk_link_portfolio_asset
+        tests: [not_null]
+      - name: valid_from
+        tests: [not_null]
+      - name: membership_share
+        tests: [not_null]

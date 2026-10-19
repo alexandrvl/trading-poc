@@ -1,0 +1,47 @@
+version: 2
+
+models:
+  - name: hub_asset
+    description: Physical generator or storage device.
+    columns:
+      - name: hk_asset
+        tests: [not_null, unique]
+      - name: asset_id
+        tests: [not_null, unique]
+      - name: ldts
+        tests: [not_null]
+      - name: rsrc
+        tests: [not_null]
+  - name: hub_portfolio
+    description: Periotheus trading portfolio.
+    columns:
+      - name: hk_portfolio
+        tests: [not_null, unique]
+      - name: portfolio_id
+        tests: [not_null, unique]
+      - name: ldts
+        tests: [not_null]
+      - name: rsrc
+        tests: [not_null]
+  - name: hub_market
+    description: Wholesale, balancing or capacity market.
+    columns:
+      - name: hk_market
+        tests: [not_null, unique]
+      - name: market_code
+        tests: [not_null, unique]
+      - name: ldts
+        tests: [not_null]
+      - name: rsrc
+        tests: [not_null]
+  - name: hub_trade_order
+    description: Exchange or Periotheus order.
+    columns:
+      - name: hk_order
+        tests: [not_null, unique]
+      - name: order_id
+        tests: [not_null, unique]
+      - name: ldts
+        tests: [not_null]
+      - name: rsrc
+        tests: [not_null]

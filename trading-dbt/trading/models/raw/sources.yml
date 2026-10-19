@@ -1,0 +1,30 @@
+version: 2
+
+sources:
+  - name: raw
+    description: Iceberg landing tables loaded from PostgreSQL.
+    database: iceberg
+    schema: raw
+    tables:
+      - name: assets
+        description: Physical generators and storage devices from Emsys and ERP.
+      - name: portfolios
+        description: Periotheus trading portfolios.
+      - name: portfolio_membership
+        description: Effectivity of asset membership in a trading portfolio.
+      - name: markets
+        description: Wholesale, balancing and capacity market codes.
+      - name: trade_orders
+        description: Confirmed Periotheus orders and trades.
+      - name: emsys_telemetry
+        description: High-frequency asset telemetry from Emsys VPP.
+      - name: capacity_status
+        description: Declared availability and outage status for capacity markets.
+      - name: meteologica_forecast
+        description: Ensemble and intraday forecasts. Several rows share one asset and run timestamp.
+      - name: portfolio_settlement
+        description: Portfolio-level day-ahead revenue and imbalance cost.
+      - name: balancing_settlement
+        description: Portfolio-level aFRR, mFRR, FCR and capacity payments.
+      - name: market_prices
+        description: Clearing prices used to monetise curtailment.

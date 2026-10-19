@@ -1,0 +1,28 @@
+version: 2
+
+models:
+  - name: mart_asset_internal_billing
+    description: Asset-level internal billing for finance and ETRM feedback.
+    columns:
+      - name: asset_id
+        tests: [not_null]
+      - name: portfolio_id
+        tests: [not_null]
+      - name: interval_start
+        tests: [not_null]
+      - name: net_revenue_eur
+        tests: [not_null]
+  - name: mart_curtailment_compensation
+    description: Down-regulation volumes and compensation.
+    columns:
+      - name: asset_id
+        tests: [not_null]
+      - name: lost_energy_mwh
+        tests: [not_null]
+  - name: mart_portfolio_reconciliation
+    description: Asset billing rolled back to the portfolio interval.
+    columns:
+      - name: portfolio_id
+        tests: [not_null]
+      - name: interval_start
+        tests: [not_null]

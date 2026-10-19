@@ -1,0 +1,165 @@
+# Electricity trading Data Vault 2.0 on Trino, Iceberg and dbt.
+# Host ports are offset from the meter-data sample so both stacks can run.
+
+services:
+  postgres:
+    image: postgres:15
+    container_name: trading-dbt-postgres
+    environment:
+      POSTGRES_USER: dbt_user
+      POSTGRES_PASSWORD: dbt_password
+      POSTGRES_DB: iceberg_dbt
+      POSTGRES_HOST_AUTH_METHOD: md5
+      POSTGRES_INITDB_ARGS: "--auth-host=md5 --auth=md5"
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-scripts:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dbt_user -d iceberg_dbt"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  minio:
+    image: bitnamilegacy/minio:latest
+    container_name: trading-dbt-minio
+    environment:
+      MINIO_ROOT_USER: minio_user
+      MINIO_ROOT_PASSWORD: minio_password
+      MINIO_DEFAULT_BUCKETS: iceberg-data
+      MINIO_BROWSER: "on"
+      MINIO_STARTUP_TIMEOUT: "60"
+    ports:
+      - "9010:9000"
+      - "9011:9001"
+    volumes:
+      - minio_data:/bitnami/minio/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:9000/minio/health/live"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+
+  trino:
+    image: trinodb/trino:latest
+    container_name: trading-dbt-trino
+    ports:
+      - "8082:8080"
+    volumes:
+      - ./trino/etc:/etc/trino
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/v1/info"]
+      interval: 20s
+      timeout: 10s
+      retries: 15
+
+  parquet-loader:
+    build:
+      context: .
+      dockerfile: Dockerfile.parquet-loader
+    container_name: trading-dbt-parquet-loader
+    environment:
+      LOADER_TYPE: generic
+      SOURCE_HOST: postgres
+      SOURCE_PORT: 5432
+      SOURCE_DB: iceberg_dbt
+      SOURCE_USER: dbt_user
+      SOURCE_PASSWORD: dbt_password
+      SOURCE_SCHEMA: trading
+      S3_REGION: eu-central-1
+      S3_ACCESS_KEY: minio_user
+      S3_SECRET_KEY: minio_password
+      S3_ENDPOINT: minio:9000
+      S3_BUCKET: iceberg-data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      trino:
+        condition: service_healthy
+    restart: "no"
+
+  dbt-models:
+    build:
+      context: .
+      dockerfile: Dockerfile.dbt
+    container_name: trading-dbt-models
+    volumes:
+      - ./trading:/app/trading
+    environment:
+      DBT_TARGET: prod
+      DBT_THREADS: 1
+      DBT_TRINO_HOST: trino
+      DBT_TRINO_PORT: 8080
+      DBT_TRINO_USER: trino
+      DBT_TRINO_PASSWORD: ""
+      DBT_TRINO_DATABASE: iceberg
+      DBT_TRINO_SCHEMA: raw_vault
+    depends_on:
+      parquet-loader:
+        condition: service_completed_successfully
+      trino:
+        condition: service_healthy
+    restart: "no"
+    command:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        echo "Building the electricity trading Data Vault"
+        dbt deps --profiles-dir /app/trading || true
+        dbt run --select staging raw_vault business_vault information_mart --profiles-dir /app/trading
+        dbt test --profiles-dir /app/trading
+        echo "Build complete"
+        echo "  SELECT * FROM iceberg.information_mart.mart_asset_internal_billing"
+
+  redis:
+    image: redis:7-alpine
+    container_name: trading-dbt-redis
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  superset:
+    build:
+      context: ./superset
+    container_name: trading-dbt-superset
+    command: ["bash", "/app/docker/bootstrap.sh"]
+    ports:
+      - "8088:8088"
+    volumes:
+      - ./superset/superset_config.py:/app/pythonpath/superset_config.py:ro
+      - ./superset/bootstrap.sh:/app/docker/bootstrap.sh:ro
+      - ./superset/bootstrap_bi.py:/app/docker/bootstrap_bi.py:ro
+    environment:
+      SUPERSET_SECRET_KEY: trading-dbt-local-superset-secret-key
+      SUPERSET_METADATA_DB: postgresql+psycopg2://dbt_user:dbt_password@postgres:5432/superset
+      REDIS_URL: redis://redis:6379/0
+      SUPERSET_PORT: "8088"
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      trino:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8088/health"]
+      interval: 20s
+      timeout: 10s
+      retries: 20
+      start_period: 120s
+
+volumes:
+  postgres_data:
+  minio_data:

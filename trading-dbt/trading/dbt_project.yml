@@ -1,0 +1,47 @@
+name: trading
+version: '1.0.0'
+profile: trading
+
+model-paths: ["models"]
+analysis-paths: ["analyses"]
+test-paths: ["tests"]
+seed-paths: ["seeds"]
+macro-paths: ["macros"]
+snapshot-paths: ["snapshots"]
+
+clean-targets:
+  - target
+  - dbt_packages
+
+flags:
+  require_certificate_validation: false
+
+models:
+  trading:
+    staging:
+      +materialized: view
+      +schema: staging
+
+    raw_vault:
+      +schema: raw_vault
+      +table_type: iceberg
+      hubs:
+        +materialized: incremental
+        +incremental_strategy: merge
+      links:
+        +materialized: incremental
+        +incremental_strategy: merge
+      satellites:
+        +materialized: incremental
+        +incremental_strategy: merge
+      references:
+        +materialized: table
+
+    business_vault:
+      +materialized: table
+      +schema: business_vault
+      +table_type: iceberg
+
+    information_mart:
+      +materialized: view
+      +schema: information_mart
