@@ -20,7 +20,7 @@ deduped as (
             rsrc,
             row_number() over (partition by hk_order order by ldts) as rn
         from source
-    )
+    ) ranked
     where rn = 1
 )
 

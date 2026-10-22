@@ -13,7 +13,7 @@ models:
       - name: nominal_power_kw
         tests: [not_null]
   - name: sat_asset_emsys_telemetry
-    description: Append-only Emsys telemetry, partitioned by day of load timestamp.
+    description: Append-only Emsys telemetry, including SoC, stub degradation and availability.
     columns:
       - name: hk_asset
         tests: [not_null]
@@ -44,6 +44,17 @@ models:
       - name: target_timestamp
         tests: [not_null]
       - name: expected_power_kw
+        tests: [not_null]
+  - name: sat_asset_down_regulation
+    description: ETRM / Elering down-regulation commands applied to an asset.
+    columns:
+      - name: hk_asset
+        tests: [not_null]
+      - name: ldts
+        tests: [not_null]
+      - name: event_id
+        tests: [not_null]
+      - name: commanded_setpoint_kw
         tests: [not_null]
   - name: sat_portfolio_details
     description: Trading portfolio attributes.

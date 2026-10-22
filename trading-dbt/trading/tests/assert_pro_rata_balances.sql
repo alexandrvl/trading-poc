@@ -11,5 +11,5 @@ from (
         max(portfolio_revenue_eur) as portfolio_revenue_eur
     from {{ ref('bv_pro_rata_allocation') }}
     group by portfolio_id, interval_start
-)
+) summed
 where abs(sum_alloc - portfolio_revenue_eur) > 0.01

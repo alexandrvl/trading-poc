@@ -1,0 +1,84 @@
+# Lightweight interactive PoC: Postgres + FastAPI + Streamlit.
+# Does not start Trino / MinIO / Superset. Port 5433 matches the lakehouse compose,
+# so do not run both stacks at once.
+
+services:
+  postgres:
+    image: postgres:15
+    container_name: trading-poc-postgres
+    environment:
+      POSTGRES_USER: dbt_user
+      POSTGRES_PASSWORD: dbt_password
+      POSTGRES_DB: iceberg_dbt
+      POSTGRES_HOST_AUTH_METHOD: md5
+      POSTGRES_INITDB_ARGS: "--auth-host=md5 --auth=md5"
+    ports:
+      - "5433:5432"
+    volumes:
+      - interactive_postgres_data:/var/lib/postgresql/data
+      - ./trading-dbt/init-scripts:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dbt_user -d iceberg_dbt"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: .
+      dockerfile: interactive/Dockerfile
+    container_name: trading-poc-backend
+    environment:
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGUSER: dbt_user
+      PGPASSWORD: dbt_password
+      PGDATABASE: iceberg_dbt
+      DBT_PROJECT_DIR: /opt/trading
+      SCHEMA_SQL: /opt/init-scripts/03-interactive.sql
+      DBT_POSTGRES_HOST: postgres
+      DBT_POSTGRES_PORT: "5432"
+      DBT_POSTGRES_USER: dbt_user
+      DBT_POSTGRES_PASSWORD: dbt_password
+      DBT_POSTGRES_DB: iceberg_dbt
+      DBT_TARGET: postgres
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./interactive:/app/interactive
+      - ./trading-dbt/trading:/opt/trading
+      - ./trading-dbt/init-scripts:/opt/init-scripts
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["uvicorn", "interactive.backend.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  ui:
+    build:
+      context: .
+      dockerfile: interactive/Dockerfile
+    container_name: trading-poc-ui
+    environment:
+      TRADING_API_URL: http://backend:8000
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./interactive:/app/interactive
+    depends_on:
+      backend:
+        condition: service_healthy
+    command:
+      - streamlit
+      - run
+      - interactive/ui/streamlit_app.py
+      - --server.address=0.0.0.0
+      - --server.port=8501
+      - --server.headless=true
+
+volumes:
+  interactive_postgres_data:

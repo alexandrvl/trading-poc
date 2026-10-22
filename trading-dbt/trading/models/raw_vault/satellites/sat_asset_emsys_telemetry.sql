@@ -2,15 +2,11 @@
     config(
         materialized='incremental',
         incremental_strategy='append',
-        properties={
-            "format": "'PARQUET'",
-            "partitioning": "ARRAY['day(ldts)']"
-        }
+        properties=iceberg_properties('ldts')
     )
 }}
 
--- Append-only journal of Emsys samples. Iceberg partitioning uses Trino's
--- `partitioning` property (the architecture note's partitioned_by name).
+-- Append-only journal of Emsys samples.
 select
     hk_asset,
     ldts,
@@ -22,6 +18,11 @@ select
     turbine_status,
     setpoint_limit_kw,
     control_mode,
+    {% if target.type == 'postgres' %}
+    soc_percent,
+    degradation_cost_eur,
+    availability_status,
+    {% endif %}
     hashdiff,
     rsrc
 from {{ ref('stg_emsys_telemetry') }}

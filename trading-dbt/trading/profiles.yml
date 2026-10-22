@@ -28,3 +28,14 @@ trading:
       http_scheme: http
       cert: false
       retries: 3
+
+    postgres:
+      type: postgres
+      host: "{{ env_var('DBT_POSTGRES_HOST', 'localhost') }}"
+      port: "{{ env_var('DBT_POSTGRES_PORT', '5433') | int }}"
+      user: "{{ env_var('DBT_POSTGRES_USER', 'dbt_user') }}"
+      password: "{{ env_var('DBT_POSTGRES_PASSWORD', 'dbt_password') }}"
+      dbname: "{{ env_var('DBT_POSTGRES_DB', 'iceberg_dbt') }}"
+      schema: "{{ env_var('DBT_POSTGRES_SCHEMA', 'raw_vault') }}"
+      threads: "{{ env_var('DBT_THREADS', '4') | int }}"
+      sslmode: disable

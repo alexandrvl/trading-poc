@@ -1,0 +1,194 @@
+from __future__ import annotations
+
+import os
+
+import httpx
+import pandas as pd
+import plotly.graph_objects as go
+import streamlit as st
+
+API_URL = os.getenv("TRADING_API_URL", "http://localhost:8000")
+
+st.set_page_config(page_title="Tradic interactive PoC", layout="wide")
+st.title("Tradic interactive PoC")
+st.caption("Mocked VPP, forecast ensembles and ETRM writing into Postgres. Inspect dbt reports live.")
+
+
+def api(method: str, path: str, **kwargs):
+    url = f"{API_URL}{path}"
+    try:
+        response = httpx.request(method, url, timeout=180.0, **kwargs)
+        response.raise_for_status()
+        if response.content:
+            return response.json()
+        return {}
+    except httpx.HTTPError as exc:
+        st.error(f"{method} {path} failed: {exc}")
+        return None
+
+
+state = api("GET", "/state") or {}
+assets = state.get("assets") or []
+asset_ids = [a["asset_id"] for a in assets] or ["WT-EE-N-01"]
+
+with st.sidebar:
+    st.header("Clock")
+    st.write(f"Sim time: **{state.get('sim_ts', '—')}**")
+    st.write(f"ISP start: {state.get('isp_start', '—')}")
+    st.write("Status: **running**" if state.get("running") else "Status: paused")
+    cols = st.columns(2)
+    if cols[0].button("Start", use_container_width=True):
+        api("POST", "/sim/start")
+        st.rerun()
+    if cols[1].button("Pause", use_container_width=True):
+        api("POST", "/sim/pause")
+        st.rerun()
+    speed = st.slider(
+        "Speed (sim min / wall s)",
+        1,
+        240,
+        int(state.get("speed_factor") or 60),
+        key="speed",
+    )
+    if st.button("Apply speed"):
+        api("POST", "/sim/speed", json={"speed_factor": speed})
+        st.rerun()
+
+    st.header("Dispatch")
+    asset_id = st.selectbox("Asset", asset_ids, key="asset_id")
+    selected = next((a for a in assets if a["asset_id"] == asset_id), {})
+    available = st.toggle("Available", value=bool(selected.get("available", True)), key="available")
+    if st.button("Set availability"):
+        api("POST", f"/assets/{asset_id}/availability", json={"available": available})
+        st.rerun()
+    default_setpoint = float(selected.get("setpoint_limit_kw") or selected.get("nominal_kw") or 0)
+    setpoint = st.number_input("Setpoint limit kW", min_value=0.0, value=default_setpoint, key="setpoint")
+    if st.button("Apply setpoint"):
+        api("POST", f"/assets/{asset_id}/setpoint", json={"setpoint_limit_kw": setpoint})
+        st.rerun()
+    duration = st.slider("Down-regulation minutes (sim)", 10, 45, 20, key="dr_min")
+    if st.button("Send down-regulation", type="primary"):
+        nominal = float(selected.get("nominal_kw") or setpoint or 1)
+        limit = setpoint if setpoint < 0.5 * nominal else nominal * 0.2
+        api(
+            "POST",
+            "/market/down-regulation",
+            json={"asset_id": asset_id, "setpoint_limit_kw": limit, "duration_minutes": duration},
+        )
+        st.rerun()
+
+    st.header("Bid")
+    market = st.selectbox(
+        "Market",
+        ["NP_DA_EE", "ELERING_mFRR_DOWN", "ELERING_aFRR_UP", "CAPACITY_MARKET_BALTIC"],
+        key="market",
+    )
+    volume = st.number_input("Volume MW", min_value=0.1, value=1.0, key="volume")
+    price = st.number_input("Price EUR", value=80.0, key="price")
+    if st.button("Place / accept bid"):
+        api(
+            "POST",
+            "/market/bids",
+            json={
+                "portfolio_id": selected.get("portfolio_id") or "Wind_EE_North",
+                "market_code": market,
+                "price_eur": price,
+                "volume_mw": volume,
+                "accept": True,
+            },
+        )
+        st.rerun()
+
+
+@st.fragment(run_every=2)
+def live_panel() -> None:
+    latest = api("GET", "/telemetry/latest") or {}
+    samples = latest.get("samples") or []
+    prices = latest.get("last_prices") or {}
+    kpis = st.columns(4)
+    kpis[0].metric("Sim time", str(latest.get("sim_ts") or "—")[11:19])
+    kpis[1].metric("DA EUR/MWh", f"{float(prices.get('NP_DA_EE') or 0):.1f}")
+    kpis[2].metric("mFRR down EUR/MWh", f"{float(prices.get('ELERING_mFRR_DOWN') or 0):.1f}")
+    total_kw = sum(float(s.get("active_power_kw") or 0) for s in samples)
+    kpis[3].metric("VPP kW", f"{total_kw:.0f}")
+
+    history = api("GET", "/telemetry/history?minutes=120") or []
+    hist = pd.DataFrame(history)
+    if hist.empty:
+        st.info("Start the clock to stream telemetry.")
+        return
+    hist["event_ts"] = pd.to_datetime(hist["event_ts"])
+    power = hist.groupby("event_ts", as_index=False)["active_power_kw"].sum()
+    setpoint_df = hist.groupby("event_ts", as_index=False)["setpoint_limit_kw"].sum()
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=power["event_ts"], y=power["active_power_kw"], name="Active power kW"))
+    fig.add_trace(
+        go.Scatter(x=setpoint_df["event_ts"], y=setpoint_df["setpoint_limit_kw"], name="Setpoint kW")
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=power["event_ts"],
+            y=[float(prices.get("NP_DA_EE") or 80)] * len(power),
+            name="DA EUR/MWh",
+            yaxis="y2",
+            line=dict(dash="dot"),
+        )
+    )
+    fig.update_layout(
+        margin=dict(l=10, r=10, t=30, b=10),
+        height=360,
+        yaxis=dict(title="kW"),
+        yaxis2=dict(title="EUR/MWh", overlaying="y", side="right"),
+        legend=dict(orientation="h"),
+    )
+    st.plotly_chart(fig, use_container_width=True)
+    st.dataframe(pd.DataFrame(latest.get("assets") or assets), use_container_width=True, hide_index=True)
+
+
+live_panel()
+
+events = state.get("recent_events") or []
+if events:
+    st.subheader("Recent sim events")
+    st.dataframe(pd.DataFrame(events), use_container_width=True, hide_index=True)
+
+st.header("dbt reports")
+st.write(
+    "After a down-regulation, wait until the 15-minute ISP closes (at speed 60 that is ~15 wall seconds), "
+    "then refresh. Open **mart_curtailment_compensation** — lost energy should appear for the curtailed asset."
+)
+report_names = api("GET", "/reports") or {
+    "mart_curtailment_compensation": "information_mart.mart_curtailment_compensation"
+}
+choice = st.selectbox(
+    "Report",
+    list(report_names.keys()),
+    index=list(report_names.keys()).index("mart_curtailment_compensation")
+    if "mart_curtailment_compensation" in report_names
+    else 0,
+    key="report",
+)
+c1, c2 = st.columns(2)
+if c1.button("Refresh reports (dbt run)"):
+    with st.spinner("Running dbt against Postgres…"):
+        result = api("POST", "/dbt/run", json={"full_refresh": False})
+    if result:
+        st.write(result.get("status"), result.get("duration_s"), "s")
+        if result.get("status") != "ok":
+            st.code(result.get("stderr_tail") or result.get("stdout_tail") or "")
+if c2.button("Reload table"):
+    st.rerun()
+
+rows = api("GET", f"/reports/{choice}?limit=200")
+if rows is None:
+    st.warning("No report rows yet. Run dbt after the first ISP settles.")
+elif not rows:
+    st.info("Report is empty. Send down-regulation, wait for ISP close, then refresh dbt.")
+else:
+    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+last_dbt = state.get("last_dbt") or {}
+if last_dbt.get("status") and last_dbt.get("status") != "never":
+    st.caption(
+        f"Last dbt: {last_dbt.get('status')} in {last_dbt.get('duration_s')}s at {last_dbt.get('started_at')}"
+    )

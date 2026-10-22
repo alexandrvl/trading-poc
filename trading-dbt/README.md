@@ -1,6 +1,8 @@
 # Electricity trading Data Vault
 
-dbt project for asset-level electricity billing on Trino and Apache Iceberg. Portfolio trades from Periotheus are split onto Emsys assets, with Meteologica forecasts used for imbalance attribution and curtailment.
+dbt project for asset-level electricity billing. The original stack is Trino and Apache Iceberg. The **interactive PoC** runs the same models on PostgreSQL — start that from the repo root with `docker compose -f docker-compose.interactive.yml up --build` (see the root README). Do not run this lakehouse compose and the interactive compose at the same time; both bind Postgres to host port 5433.
+
+Portfolio trades from Periotheus are split onto Emsys assets, with Meteologica forecasts used for imbalance attribution and curtailment.
 
 The loader and local stack follow [iceberg-dbt-etl](https://github.com/alexandrvl/iceberg-dbt-etl).
 
@@ -116,6 +118,14 @@ From the host, with Trino already on port 8082:
 ```bash
 cd trading
 dbt run --select staging raw_vault business_vault information_mart
+```
+
+Against the interactive Postgres (host port 5433):
+
+```bash
+cd trading
+DBT_TARGET=postgres dbt run --select staging raw_vault business_vault information_mart --target postgres \
+  --vars '{raw_database: iceberg_dbt, raw_schema: trading, trino_table_type: ""}'
 ```
 
 ## Project layout

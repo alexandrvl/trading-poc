@@ -3,10 +3,7 @@
         materialized='incremental',
         incremental_strategy='merge',
         unique_key=['hk_asset', 'hk_portfolio', 'interval_start'],
-        properties={
-            "format": "'PARQUET'",
-            "partitioning": "ARRAY['day(interval_start)']"
-        }
+        properties=iceberg_properties('interval_start')
     )
 }}
 

@@ -16,6 +16,11 @@ clean-targets:
 flags:
   require_certificate_validation: false
 
+vars:
+  raw_database: iceberg
+  raw_schema: raw
+  trino_table_type: iceberg
+
 models:
   trading:
     staging:
@@ -24,7 +29,7 @@ models:
 
     raw_vault:
       +schema: raw_vault
-      +table_type: iceberg
+      +table_type: "{{ var('trino_table_type') }}"
       hubs:
         +materialized: incremental
         +incremental_strategy: merge
@@ -40,7 +45,7 @@ models:
     business_vault:
       +materialized: table
       +schema: business_vault
-      +table_type: iceberg
+      +table_type: "{{ var('trino_table_type') }}"
 
     information_mart:
       +materialized: view

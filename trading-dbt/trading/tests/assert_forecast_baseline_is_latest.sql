@@ -15,7 +15,7 @@ with latest as (
                 order by ldts desc
             ) as rn
         from {{ ref('sat_asset_meteologica_forecast') }}
-    )
+    ) ranked
     where rn = 1
 )
 

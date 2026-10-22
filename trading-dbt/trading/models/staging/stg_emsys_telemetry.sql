@@ -9,6 +9,11 @@ select
     turbine_status,
     setpoint_limit_kw,
     control_mode,
+    {% if target.type == 'postgres' %}
+    soc_percent,
+    degradation_cost_eur,
+    coalesce(availability_status, true) as availability_status,
+    {% endif %}
     {{ hash_key('asset_id', 'hk_asset') }},
     {{ hash_diff([
         'active_power_kw', 'reactive_power_kvar', 'turbine_status',
