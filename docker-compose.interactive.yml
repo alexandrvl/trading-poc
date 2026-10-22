@@ -1,6 +1,5 @@
-# Lightweight interactive PoC: Postgres + FastAPI + Streamlit.
-# Does not start Trino / MinIO / Superset. Port 5433 matches the lakehouse compose,
-# so do not run both stacks at once.
+# Interactive PoC: Postgres + MinIO + Iceberg catalog (JDBC on Postgres) + Trino + API + UI.
+# One compose path. Do not start trading-dbt/docker-compose.yml at the same time (shared 5433).
 
 services:
   postgres:
@@ -23,6 +22,44 @@ services:
       timeout: 5s
       retries: 10
 
+  minio:
+    image: bitnamilegacy/minio:latest
+    container_name: trading-poc-minio
+    environment:
+      MINIO_ROOT_USER: minio_user
+      MINIO_ROOT_PASSWORD: minio_password
+      MINIO_DEFAULT_BUCKETS: iceberg-data
+      MINIO_BROWSER: "on"
+      MINIO_STARTUP_TIMEOUT: "60"
+    ports:
+      - "9010:9000"
+      - "9011:9001"
+    volumes:
+      - interactive_minio_data:/bitnami/minio/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:9000/minio/health/live"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+
+  trino:
+    image: trinodb/trino:latest
+    container_name: trading-poc-trino
+    ports:
+      - "8082:8080"
+    volumes:
+      - ./trading-dbt/trino/etc:/etc/trino
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/v1/info"]
+      interval: 20s
+      timeout: 10s
+      retries: 15
+
   backend:
     build:
       context: .
@@ -42,6 +79,15 @@ services:
       DBT_POSTGRES_PASSWORD: dbt_password
       DBT_POSTGRES_DB: iceberg_dbt
       DBT_TARGET: postgres
+      SIM_CONFIG: /app/interactive/config/sim.yaml
+      S3_ENDPOINT: minio:9000
+      S3_ACCESS_KEY: minio_user
+      S3_SECRET_KEY: minio_password
+      S3_BUCKET: iceberg-data
+      S3_REGION: eu-central-1
+      ICEBERG_ENABLED: "true"
+      TRINO_HOST: trino
+      TRINO_PORT: "8080"
     ports:
       - "8000:8000"
     volumes:
@@ -50,6 +96,8 @@ services:
       - ./trading-dbt/init-scripts:/opt/init-scripts
     depends_on:
       postgres:
+        condition: service_healthy
+      minio:
         condition: service_healthy
     command: ["uvicorn", "interactive.backend.main:app", "--host", "0.0.0.0", "--port", "8000"]
     healthcheck:
@@ -82,3 +130,4 @@ services:
 
 volumes:
   interactive_postgres_data:
+  interactive_minio_data:

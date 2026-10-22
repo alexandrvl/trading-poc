@@ -1,6 +1,6 @@
 # Electricity trading Data Vault
 
-dbt project for asset-level electricity billing. The original stack is Trino and Apache Iceberg. The **interactive PoC** runs the same models on PostgreSQL — start that from the repo root with `docker compose -f docker-compose.interactive.yml up --build` (see the root README). Do not run this lakehouse compose and the interactive compose at the same time; both bind Postgres to host port 5433.
+dbt project for asset-level electricity billing. The original stack is Trino and Apache Iceberg. The **interactive PoC** runs the same models on PostgreSQL and also starts MinIO + Trino for live Iceberg append — from the repo root: `docker compose -f docker-compose.interactive.yml up --build` (see the root README). Do not run this lakehouse compose and the interactive compose at the same time; both bind Postgres to host port 5433.
 
 Portfolio trades from Periotheus are split onto Emsys assets, with Meteologica forecasts used for imbalance attribution and curtailment.
 

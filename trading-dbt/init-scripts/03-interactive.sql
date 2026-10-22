@@ -17,7 +17,8 @@ ALTER SEQUENCE trading.emsys_telemetry_id_seq
 ALTER TABLE trading.emsys_telemetry
     ADD COLUMN IF NOT EXISTS soc_percent double precision,
     ADD COLUMN IF NOT EXISTS degradation_cost_eur double precision,
-    ADD COLUMN IF NOT EXISTS availability_status boolean;
+    ADD COLUMN IF NOT EXISTS availability_status boolean,
+    ADD COLUMN IF NOT EXISTS soh_percent double precision;
 
 UPDATE trading.emsys_telemetry t
 SET availability_status = (t.turbine_status NOT IN ('UNAVAILABLE', 'OFFLINE'))

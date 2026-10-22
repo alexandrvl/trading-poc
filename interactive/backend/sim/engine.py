@@ -2,22 +2,27 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import os
+import random
 import subprocess
-from collections import defaultdict
-from datetime import datetime, timedelta
+import time
+from collections import defaultdict, deque
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from interactive.backend.config import settings
+from interactive.backend.config import SIM_RAW, settings
 from interactive.backend.db import db
+from interactive.backend.iceberg_ingest import IcebergSink
 from interactive.backend.sim.clock import SimClock, quarter_hour_start
 from interactive.backend.sim.etrm import (
     balancing_rows,
     da_order_row,
     down_regulation_event,
     price_rows,
+    sample_da_price,
     settlement_rows,
 )
 from interactive.backend.sim.forecasts import build_forecast_rows
@@ -30,8 +35,8 @@ TELEMETRY_INSERT = """
 INSERT INTO trading.emsys_telemetry (
     asset_id, event_ts, active_power_kw, reactive_power_kvar,
     turbine_status, setpoint_limit_kw, control_mode, source_system, ingested_at,
-    soc_percent, degradation_cost_eur, availability_status
-) VALUES (%s, %s, %s, %s, %s, %s, %s, 'EMSYS_VPP', %s, %s, %s, %s)
+    soc_percent, degradation_cost_eur, availability_status, soh_percent
+) VALUES (%s, %s, %s, %s, %s, %s, %s, 'EMSYS_VPP', %s, %s, %s, %s, %s)
 """
 
 FORECAST_UPSERT = """
@@ -98,6 +103,13 @@ ON CONFLICT (market_code, interval_start) DO UPDATE SET
     loaded_at = EXCLUDED.loaded_at
 """
 
+AFRR_INSERT = """
+INSERT INTO trading.afrr_activations (
+    portfolio_id, asset_id, event_ts, setpoint_kw, direction,
+    price_eur_mwh, source_system
+) VALUES (%s, %s, %s, %s, %s, %s, 'PERIOTHEUS')
+"""
+
 REPORTS = {
     "mart_curtailment_compensation": "information_mart.mart_curtailment_compensation",
     "mart_asset_internal_billing": "information_mart.mart_asset_internal_billing",
@@ -125,16 +137,24 @@ class SimEngine:
         }
         self._task: asyncio.Task | None = None
         self._afrr_task: asyncio.Task | None = None
+        self._iceberg_task: asyncio.Task | None = None
         self._lock = asyncio.Lock()
         self._dbt_lock = asyncio.Lock()
         self.last_dbt: dict[str, Any] = {"status": "never"}
         self.events: list[dict] = []
+        self.recent_afrr: deque[dict] = deque(maxlen=80)
+        self.rng = random.Random(settings.rng_seed)
+        self.iceberg = IcebergSink(settings)
 
     async def load(self) -> None:
         asset_rows = await db.fetch(
-            "SELECT asset_id, technology, nominal_power_kw FROM trading.assets ORDER BY asset_id"
+            """
+            SELECT asset_id, technology, nominal_power_kw, latitude, longitude
+            FROM trading.assets
+            ORDER BY asset_id
+            """
         )
-        self.assets = seed_assets(asset_rows)
+        self.assets = seed_assets(asset_rows, rng_seed=settings.rng_seed)
         members = await db.fetch(
             """
             SELECT asset_id, portfolio_id
@@ -159,6 +179,8 @@ class SimEngine:
             self._task = asyncio.create_task(self._run_loop(), name="sim-clock")
         if self._afrr_task is None or self._afrr_task.done():
             self._afrr_task = asyncio.create_task(self._afrr_loop(), name="afrr")
+        if self._iceberg_task is None or self._iceberg_task.done():
+            self._iceberg_task = asyncio.create_task(self._iceberg_loop(), name="iceberg")
         return self.snapshot()
 
     async def pause(self) -> dict:
@@ -167,11 +189,15 @@ class SimEngine:
         return self.snapshot()
 
     def snapshot(self) -> dict:
+        last_afrr = self.recent_afrr[-1] if self.recent_afrr else None
         return {
             "running": self.clock.running,
             "sim_ts": self.clock.sim_ts.isoformat(sep=" "),
             "speed_factor": self.clock.speed_factor,
             "isp_start": quarter_hour_start(self.clock.sim_ts).isoformat(sep=" "),
+            "afrr_period_seconds": settings.afrr_period_seconds,
+            "last_afrr": last_afrr,
+            "iceberg": self.iceberg.last_flush,
             "assets": [
                 {
                     "asset_id": a.asset_id,
@@ -181,6 +207,8 @@ class SimEngine:
                     "setpoint_limit_kw": a.setpoint_limit_kw,
                     "control_mode": a.control_mode,
                     "soc_percent": a.soc_percent if a.technology.upper() == "BESS" else None,
+                    "soh_percent": a.rainflow.soh_percent if a.rainflow else None,
+                    "degradation_cost_eur": a.rainflow.cumulative_cost_eur if a.rainflow else None,
                     "last_power_kw": a.last_power_kw,
                     "portfolio_id": self.membership.get(a.asset_id),
                 }
@@ -291,10 +319,31 @@ class SimEngine:
         direction: str = "SELL",
         accept: bool = True,
     ) -> dict:
+        isp = int(SIM_RAW["clock"]["isp_minutes"])
         start = quarter_hour_start(self.clock.sim_ts)
-        end = start + timedelta(minutes=15)
+        end = start + timedelta(minutes=isp)
         order_id = f"ORD-BID-{uuid4().hex[:10]}"
         status = "CONFIRMED" if accept else "OPEN"
+        floor = None
+        if accept and "mFRR" in market_code:
+            for asset in self.assets.values():
+                if self.membership.get(asset.asset_id) != portfolio_id:
+                    continue
+                if asset.technology.upper() != "BESS":
+                    continue
+                floor = asset.mfrr_floor_eur_mwh(volume_mw, duration_h=isp / 60.0)
+                if price_eur < floor:
+                    status = "REJECTED"
+                    accept = False
+                    self._note(
+                        f"Rainflow rejected {market_code} {volume_mw} MW @ {price_eur:.2f} "
+                        f"(floor {floor:.2f} EUR/MWh, SoH {asset.rainflow.soh_percent:.3f}%)"
+                    )
+                elif price_eur < floor * 1.05:
+                    price_eur = round(floor * 1.05, 2)
+                    status = "REPRICED"
+                    self._note(f"Rainflow repriced {order_id} to {price_eur} EUR/MWh")
+                break
         if accept and market_code.startswith("ELERING_aFRR"):
             for asset in self.assets.values():
                 if self.membership.get(asset.asset_id) == portfolio_id and asset.technology.upper() == "BESS":
@@ -317,8 +366,15 @@ class SimEngine:
                 "PERIOTHEUS",
             ),
         )
-        self._note(f"Bid {order_id} {status} {volume_mw} MW @ {price_eur} on {market_code}")
-        return {"order_id": order_id, "order_status": status, **self.snapshot()}
+        if status == "CONFIRMED":
+            self._note(f"Bid {order_id} {status} {volume_mw} MW @ {price_eur} on {market_code}")
+        return {
+            "order_id": order_id,
+            "order_status": status,
+            "price_eur": price_eur,
+            "wear_floor_eur_mwh": floor,
+            **self.snapshot(),
+        }
 
     async def publish_forecasts(self, run_ts: datetime | None = None) -> int:
         run_ts = run_ts or (self.clock.sim_ts - timedelta(minutes=30))
@@ -363,7 +419,7 @@ class SimEngine:
                     "DBT_POSTGRES_DB": settings.pgdatabase,
                 }
             )
-            started = datetime.utcnow()
+            started = datetime.now(timezone.utc).replace(tzinfo=None)
             proc = await asyncio.to_thread(
                 subprocess.run,
                 cmd,
@@ -376,7 +432,9 @@ class SimEngine:
                 "status": "ok" if proc.returncode == 0 else "error",
                 "returncode": proc.returncode,
                 "started_at": started.isoformat(),
-                "duration_s": round((datetime.utcnow() - started).total_seconds(), 2),
+                "duration_s": round(
+                    (datetime.now(timezone.utc).replace(tzinfo=None) - started).total_seconds(), 2
+                ),
                 "stdout_tail": (proc.stdout or "")[-4000:],
                 "stderr_tail": (proc.stderr or "")[-2000:],
             }
@@ -396,7 +454,8 @@ class SimEngine:
         return await db.fetch(
             """
             SELECT asset_id, event_ts, active_power_kw, setpoint_limit_kw,
-                   control_mode, soc_percent, availability_status
+                   control_mode, soc_percent, availability_status, soh_percent,
+                   degradation_cost_eur
             FROM trading.emsys_telemetry
             WHERE event_ts >= %s
             ORDER BY event_ts DESC
@@ -404,6 +463,9 @@ class SimEngine:
             """,
             (self.clock.sim_ts - timedelta(minutes=minutes),),
         )
+
+    async def flush_iceberg(self) -> dict:
+        return await asyncio.to_thread(self.iceberg.flush)
 
     async def _run_loop(self) -> None:
         while True:
@@ -414,45 +476,70 @@ class SimEngine:
                 await self._tick()
             except Exception:
                 logger.exception("sim tick failed")
-            await asyncio.sleep(self.clock.wall_sleep_seconds(1.0))
+            await asyncio.sleep(self.clock.wall_sleep_seconds())
 
     async def _afrr_loop(self) -> None:
-        import math
-
         while True:
             if self.clock.running:
-                phase = self.clock.sim_ts.timestamp()
-                for asset in self.assets.values():
-                    if asset.technology.upper() != "BESS":
-                        continue
-                    if asset.control_mode == "EXTERNAL_CONTROL":
-                        continue
-                    if asset.control_mode == "AFRR":
-                        asset.setpoint_limit_kw = asset.nominal_kw * 0.4 * math.sin(phase / 8.0)
-                        await db.execute(
-                            """
-                            INSERT INTO trading.afrr_activations (
-                                portfolio_id, asset_id, event_ts, setpoint_kw, direction,
-                                price_eur_mwh, source_system
-                            ) VALUES (%s, %s, %s, %s, %s, %s, 'PERIOTHEUS')
-                            """,
-                            (
-                                self.membership.get(asset.asset_id, "Wind_EE_North"),
-                                asset.asset_id,
-                                self.clock.sim_ts,
-                                asset.setpoint_limit_kw,
-                                "UP" if asset.setpoint_limit_kw >= 0 else "DOWN",
-                                15.0,
-                            ),
-                        )
+                try:
+                    await self._picasso_tick()
+                except Exception:
+                    logger.exception("picasso tick failed")
             await asyncio.sleep(settings.afrr_period_seconds)
+
+    async def _iceberg_loop(self) -> None:
+        while True:
+            await asyncio.sleep(2.0)
+            if self.iceberg.should_flush():
+                try:
+                    await asyncio.to_thread(self.iceberg.flush)
+                except Exception:
+                    logger.exception("iceberg flush loop failed")
+
+    async def _picasso_tick(self) -> None:
+        phase = time.time()
+        frac = float(SIM_RAW["markets"]["afrr_setpoint_frac"])
+        rows = []
+        for asset in self.assets.values():
+            if asset.technology.upper() != "BESS":
+                continue
+            if asset.control_mode == "EXTERNAL_CONTROL":
+                continue
+            asset.control_mode = "AFRR"
+            asset.setpoint_limit_kw = asset.nominal_kw * frac * math.sin(phase / 8.0)
+            direction = "UP" if asset.setpoint_limit_kw >= 0 else "DOWN"
+            payload = (
+                self.membership.get(asset.asset_id, "Wind_EE_North"),
+                asset.asset_id,
+                self.clock.sim_ts,
+                asset.setpoint_limit_kw,
+                direction,
+                settings.afrr_price_eur_mwh,
+            )
+            await db.execute(AFRR_INSERT, payload)
+            row = {
+                "portfolio_id": payload[0],
+                "asset_id": asset.asset_id,
+                "event_ts": self.clock.sim_ts,
+                "setpoint_kw": asset.setpoint_limit_kw,
+                "direction": direction,
+                "price_eur_mwh": settings.afrr_price_eur_mwh,
+                "source_system": "PERIOTHEUS",
+                "wall_ts": datetime.now(timezone.utc).isoformat(),
+            }
+            rows.append(row)
+            self.recent_afrr.append(row)
+        if rows:
+            self.iceberg.enqueue_afrr(rows)
+            self.hub.publish({"type": "afrr", "period_s": settings.afrr_period_seconds, "rows": rows})
 
     async def _tick(self) -> None:
         async with self._lock:
             ts = self.clock.sim_ts
             prev_isp = quarter_hour_start(ts)
             samples = [asset.step(ts) for asset in self.assets.values()]
-            ingested = ts + timedelta(seconds=2)
+            ingested = datetime.now(timezone.utc).replace(tzinfo=None)
+            iceberg_rows = []
             for sample in samples:
                 self.last_samples[sample["asset_id"]] = sample
                 isp = quarter_hour_start(sample["event_ts"])
@@ -470,10 +557,25 @@ class SimEngine:
                         sample["soc_percent"],
                         sample["degradation_cost_eur"],
                         sample["availability_status"],
+                        sample.get("soh_percent"),
                     )
                 )
+                iceberg_rows.append(
+                    {
+                        "asset_id": sample["asset_id"],
+                        "event_ts": sample["event_ts"],
+                        "active_power_kw": sample["active_power_kw"],
+                        "reactive_power_kvar": sample["reactive_power_kvar"],
+                        "turbine_status": sample["turbine_status"],
+                        "setpoint_limit_kw": sample["setpoint_limit_kw"],
+                        "control_mode": sample["control_mode"],
+                        "source_system": "EMSYS_VPP",
+                        "ingested_at": ingested,
+                    }
+                )
+            self.iceberg.enqueue_telemetry(iceberg_rows)
             await self._flush()
-            self.clock.step_minutes(1)
+            self.clock.step_minutes()
             new_isp = quarter_hour_start(self.clock.sim_ts)
             if new_isp != prev_isp:
                 await self._settle_isp(prev_isp)
@@ -491,6 +593,7 @@ class SimEngine:
                             "setpoint_limit_kw": s["setpoint_limit_kw"],
                             "control_mode": s["control_mode"],
                             "soc_percent": s["soc_percent"],
+                            "soh_percent": s.get("soh_percent"),
                             "availability_status": s["availability_status"],
                         }
                         for s in samples
@@ -526,35 +629,35 @@ class SimEngine:
             lambda: {"generation_mwh": 0.0, "forecast_mwh": 0.0, "afrr": 0.0, "mfrr": 0.0, "available": 1.0}
         )
         curtailed = False
+        isp_h = int(SIM_RAW["clock"]["isp_minutes"]) / 60.0
         for asset_id, asset in self.assets.items():
             samples = self.isp_samples.pop((asset_id, interval_start), [])
             if not samples:
                 continue
             avg_kw = sum(s["active_power_kw"] for s in samples) / len(samples)
-            gen_mwh = avg_kw * 0.25 / 1000.0
-            fc_mwh = p50.get(asset_id, 0.0) * 0.25 / 1000.0
+            gen_mwh = avg_kw * isp_h / 1000.0
+            fc_mwh = p50.get(asset_id, 0.0) * isp_h / 1000.0
             portfolio_id = self.membership.get(asset_id, "Wind_EE_North")
             bucket = by_portfolio[portfolio_id]
             bucket["generation_mwh"] += gen_mwh
             bucket["forecast_mwh"] += fc_mwh
             if any(s["control_mode"] == "AFRR" for s in samples):
-                bucket["afrr"] += 5.0
+                bucket["afrr"] += settings.afrr_price_eur_mwh * 0.3
             if any(s["control_mode"] == "EXTERNAL_CONTROL" for s in samples):
                 bucket["mfrr"] += 8.0
                 curtailed = True
             if not asset.available:
                 bucket["available"] = 0.0
 
-        mfrr_price = (
-            settings.mfrr_down_price_eur_mwh if curtailed else 40.0
-        )
+        da_price = sample_da_price(self.rng)
+        mfrr_price = settings.mfrr_down_price_eur_mwh if curtailed else max(20.0, da_price * 0.5)
         self.last_prices = {
-            "NP_DA_EE": settings.da_price_eur_mwh,
+            "NP_DA_EE": da_price,
             "ELERING_mFRR_DOWN": mfrr_price,
         }
         await db.executemany(
             PRICE_UPSERT,
-            price_rows(interval_start, settings.da_price_eur_mwh, mfrr_price, loaded_at),
+            price_rows(interval_start, da_price, mfrr_price, loaded_at),
         )
         for portfolio_id, bucket in by_portfolio.items():
             await db.executemany(
@@ -564,7 +667,7 @@ class SimEngine:
                     interval_start,
                     bucket["generation_mwh"],
                     bucket["forecast_mwh"],
-                    settings.da_price_eur_mwh,
+                    da_price,
                     settings.imbalance_price_eur_mwh,
                     loaded_at,
                 ),
@@ -594,18 +697,19 @@ class SimEngine:
             a.nominal_kw for a in self.assets.values()
             if self.membership.get(a.asset_id) == "Solar_EE_South"
         ) / 1000.0 * 0.5
+        da_price = sample_da_price(self.rng)
         await db.execute(
             ORDER_UPSERT,
             da_order_row(
                 "Wind_EE_North", start, end, round(wind_mw, 3),
-                settings.da_price_eur_mwh, start - timedelta(hours=20),
+                da_price, start - timedelta(hours=20),
             ),
         )
         await db.execute(
             ORDER_UPSERT,
             da_order_row(
                 "Solar_EE_South", start, end, round(solar_mw, 3),
-                settings.da_price_eur_mwh, start - timedelta(hours=20),
+                da_price, start - timedelta(hours=20),
             ),
         )
 

@@ -1,0 +1,80 @@
+# Simulation and reference-data parameters. Secrets stay in environment variables.
+# Trading tapes, prices, and telemetry are generated at runtime from these knobs.
+
+clock:
+  sim_start: "2026-06-02T12:00:00"
+  default_speed_factor: 60
+  isp_minutes: 15
+  tick_minutes: 1
+  afrr_period_seconds: 4.0
+  ws_queue_size: 100
+
+site:
+  timezone: Europe/Tallinn
+  default_lat: 59.40
+  default_lon: 28.05
+  altitude_m: 20
+  name: EE-default-Narva
+
+wind:
+  weibull_a: 8.5
+  weibull_k: 2.0
+  cut_in_ms: 3.0
+  rated_ms: 12.0
+  cut_out_ms: 25.0
+  arma_phi: 0.82
+  arma_theta: 0.18
+
+pv:
+  stc_ghi_w_m2: 1000.0
+  cloud_ar: 0.88
+  cloud_mean: 0.18
+  cloud_noise: 0.05
+  cloud_attenuation: 0.65
+  model: ineichen
+
+bess:
+  replacement_eur: 250000.0
+  wohler_n_ref: 400.0
+  wohler_dod_ref: 1.0
+  wohler_w: 2.3
+  soc_min_percent: 5.0
+  soc_max_percent: 95.0
+  initial_soc_percent: 55.0
+  duration_hours: 1.0
+
+markets:
+  da_price_mean_eur_mwh: 80.0
+  da_price_sigma_eur_mwh: 8.0
+  mfrr_down_price_eur_mwh: 95.0
+  imbalance_price_eur_mwh: 40.0
+  afrr_price_eur_mwh: 15.0
+  bbcm_fee_eur: 10.0
+  afrr_setpoint_frac: 0.4
+  rng_seed: 7
+
+forecast:
+  horizon_hours: 6
+  sigma: 0.12
+
+iceberg:
+  enabled: true
+  namespace: raw
+  flush_seconds: 60
+  flush_rows: 50
+
+# Physics overlays on the Postgres asset master (nameplate/lat/lon still from DB).
+assets:
+  WT-EE-N-01:
+    weibull_a: 8.5
+    weibull_k: 2.0
+  WT-EE-N-02:
+    weibull_a: 8.2
+    weibull_k: 1.9
+  WT-EE-N-03:
+    weibull_a: 9.0
+    weibull_k: 2.1
+  PV-EE-S-01:
+    cloud_mean: 0.16
+  BESS-EE-01:
+    replacement_eur: 250000.0

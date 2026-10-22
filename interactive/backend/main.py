@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from typing import Any
@@ -11,6 +12,7 @@ from pydantic import BaseModel, Field
 from interactive.backend.config import settings
 from interactive.backend.db import db
 from interactive.backend.sim.engine import REPORTS, SimEngine
+from interactive.backend.trino_client import trino_query
 from interactive.backend.ws import ConnectionManager
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -156,6 +158,38 @@ async def dbt_run(body: DbtBody | None = None) -> dict[str, Any]:
 @app.get("/reports")
 async def reports() -> dict[str, str]:
     return dict(REPORTS)
+
+
+@app.get("/afrr/recent")
+async def afrr_recent() -> dict[str, Any]:
+    return {
+        "period_seconds": settings.afrr_period_seconds,
+        "rows": list(engine.recent_afrr),
+    }
+
+
+@app.post("/iceberg/flush")
+async def iceberg_flush() -> dict[str, Any]:
+    return await engine.flush_iceberg()
+
+
+@app.post("/iceberg/maintain")
+async def iceberg_maintain() -> dict[str, Any]:
+    return await asyncio.to_thread(engine.iceberg.maintain)
+
+
+@app.get("/iceberg/telemetry")
+async def iceberg_telemetry(limit: int = 20) -> list[dict[str, Any]]:
+    sql = (
+        "SELECT asset_id, event_ts, active_power_kw, ingested_at "
+        f"FROM iceberg.{settings.iceberg_namespace}.emsys_telemetry "
+        "ORDER BY ingested_at DESC "
+        f"LIMIT {int(limit)}"
+    )
+    try:
+        return await trino_query(settings.trino_host, settings.trino_port, sql)
+    except Exception as exc:
+        raise HTTPException(409, f"Iceberg query failed: {exc}") from exc
 
 
 @app.get("/reports/{name}")

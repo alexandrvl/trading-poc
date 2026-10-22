@@ -1,9 +1,21 @@
 from __future__ import annotations
 
+import random
 from datetime import datetime, timedelta
 from uuid import uuid4
 
+from interactive.backend.config import SIM_RAW
 from interactive.backend.sim.clock import quarter_hour_start
+
+
+def _isp_minutes() -> int:
+    return int(SIM_RAW["clock"]["isp_minutes"])
+
+
+def sample_da_price(rng: random.Random, mean: float | None = None, sigma: float | None = None) -> float:
+    mean = float(SIM_RAW["markets"]["da_price_mean_eur_mwh"] if mean is None else mean)
+    sigma = float(SIM_RAW["markets"]["da_price_sigma_eur_mwh"] if sigma is None else sigma)
+    return max(1.0, rng.gauss(mean, sigma))
 
 
 def da_order_row(
@@ -39,7 +51,7 @@ def settlement_rows(
     imb_price: float,
     loaded_at: datetime,
 ) -> list[tuple]:
-    interval_end = interval_start + timedelta(minutes=15)
+    interval_end = interval_start + timedelta(minutes=_isp_minutes())
     delta = generation_mwh - forecast_mwh
     return [
         (
@@ -77,16 +89,20 @@ def balancing_rows(
     mfrr_energy_eur: float,
     bbcm_fee: float,
     loaded_at: datetime,
+    rng: random.Random | None = None,
 ) -> list[tuple]:
-    interval_end = interval_start + timedelta(minutes=15)
-    penalty = 0.0 if available else 6.0
+    interval_end = interval_start + timedelta(minutes=_isp_minutes())
+    penalty = 0.0 if available else max(1.0, bbcm_fee * 0.6)
+    afrr_cap = bbcm_fee * 1.2
+    mfrr_cap = bbcm_fee * 0.3
+    fcr_cap = bbcm_fee * 0.4
     rows = [
         (
             portfolio_id,
             "ELERING_aFRR_UP",
             interval_start,
             interval_end,
-            12.0,
+            afrr_cap,
             afrr_energy_eur,
             0.0,
             loaded_at,
@@ -97,7 +113,7 @@ def balancing_rows(
             "ELERING_mFRR_UP",
             interval_start,
             interval_end,
-            3.0,
+            mfrr_cap,
             mfrr_energy_eur,
             0.0,
             loaded_at,
@@ -122,7 +138,7 @@ def balancing_rows(
                 "ELERING_FCR",
                 interval_start,
                 interval_end,
-                4.0,
+                fcr_cap,
                 0.0,
                 0.0,
                 loaded_at,
@@ -138,7 +154,7 @@ def price_rows(
     mfrr_down_price: float,
     loaded_at: datetime,
 ) -> list[tuple]:
-    interval_end = interval_start + timedelta(minutes=15)
+    interval_end = interval_start + timedelta(minutes=_isp_minutes())
     return [
         ("NP_DA_EE", interval_start, interval_end, da_price, loaded_at, "PERIOTHEUS"),
         (
