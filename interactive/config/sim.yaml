@@ -57,6 +57,9 @@ forecast:
   horizon_hours: 6
   sigma: 0.12
 
+dbt:
+  run_every_minutes: 1
+
 iceberg:
   enabled: true
   namespace: raw

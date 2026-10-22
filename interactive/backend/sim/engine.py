@@ -138,6 +138,7 @@ class SimEngine:
         self._task: asyncio.Task | None = None
         self._afrr_task: asyncio.Task | None = None
         self._iceberg_task: asyncio.Task | None = None
+        self._dbt_task: asyncio.Task | None = None
         self._lock = asyncio.Lock()
         self._dbt_lock = asyncio.Lock()
         self.last_dbt: dict[str, Any] = {"status": "never"}
@@ -172,6 +173,12 @@ class SimEngine:
         await self._seed_da_orders()
         await self._persist_clock()
 
+    def ensure_jobs(self) -> None:
+        if self._iceberg_task is None or self._iceberg_task.done():
+            self._iceberg_task = asyncio.create_task(self._iceberg_loop(), name="iceberg")
+        if self._dbt_task is None or self._dbt_task.done():
+            self._dbt_task = asyncio.create_task(self._dbt_loop(), name="dbt")
+
     async def start(self) -> dict:
         self.clock.running = True
         await self._persist_clock()
@@ -179,8 +186,7 @@ class SimEngine:
             self._task = asyncio.create_task(self._run_loop(), name="sim-clock")
         if self._afrr_task is None or self._afrr_task.done():
             self._afrr_task = asyncio.create_task(self._afrr_loop(), name="afrr")
-        if self._iceberg_task is None or self._iceberg_task.done():
-            self._iceberg_task = asyncio.create_task(self._iceberg_loop(), name="iceberg")
+        self.ensure_jobs()
         return self.snapshot()
 
     async def pause(self) -> dict:
@@ -197,6 +203,8 @@ class SimEngine:
             "isp_start": quarter_hour_start(self.clock.sim_ts).isoformat(sep=" "),
             "afrr_period_seconds": settings.afrr_period_seconds,
             "last_afrr": last_afrr,
+            "dbt_run_every_minutes": settings.dbt_run_every_minutes,
+            "iceberg_flush_seconds": settings.iceberg_flush_seconds,
             "iceberg": self.iceberg.last_flush,
             "assets": [
                 {
@@ -464,9 +472,6 @@ class SimEngine:
             (self.clock.sim_ts - timedelta(minutes=minutes),),
         )
 
-    async def flush_iceberg(self) -> dict:
-        return await asyncio.to_thread(self.iceberg.flush)
-
     async def _run_loop(self) -> None:
         while True:
             if not self.clock.running:
@@ -488,13 +493,23 @@ class SimEngine:
             await asyncio.sleep(settings.afrr_period_seconds)
 
     async def _iceberg_loop(self) -> None:
+        interval = max(1.0, float(settings.iceberg_flush_seconds))
         while True:
-            await asyncio.sleep(2.0)
+            await asyncio.sleep(min(2.0, interval))
             if self.iceberg.should_flush():
                 try:
                     await asyncio.to_thread(self.iceberg.flush)
                 except Exception:
                     logger.exception("iceberg flush loop failed")
+
+    async def _dbt_loop(self) -> None:
+        interval = max(1.0, float(settings.dbt_run_every_minutes) * 60.0)
+        while True:
+            await asyncio.sleep(interval)
+            try:
+                await self.run_dbt(full_refresh=False)
+            except Exception:
+                logger.exception("scheduled dbt run failed")
 
     async def _picasso_tick(self) -> None:
         phase = time.time()

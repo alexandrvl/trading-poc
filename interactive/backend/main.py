@@ -26,6 +26,7 @@ engine = SimEngine(hub)
 async def lifespan(_app: FastAPI):
     await db.connect()
     await engine.load()
+    engine.ensure_jobs()
     logger.info("interactive backend ready at sim_ts=%s", engine.clock.sim_ts)
     try:
         yield
@@ -68,10 +69,6 @@ class BidBody(BaseModel):
     volume_mw: float = Field(gt=0)
     direction: str = "SELL"
     accept: bool = True
-
-
-class DbtBody(BaseModel):
-    full_refresh: bool = False
 
 
 @app.get("/health")
@@ -149,12 +146,6 @@ async def market_bids(body: BidBody) -> dict[str, Any]:
     )
 
 
-@app.post("/dbt/run")
-async def dbt_run(body: DbtBody | None = None) -> dict[str, Any]:
-    full_refresh = body.full_refresh if body else False
-    return await engine.run_dbt(full_refresh=full_refresh)
-
-
 @app.get("/reports")
 async def reports() -> dict[str, str]:
     return dict(REPORTS)
@@ -166,11 +157,6 @@ async def afrr_recent() -> dict[str, Any]:
         "period_seconds": settings.afrr_period_seconds,
         "rows": list(engine.recent_afrr),
     }
-
-
-@app.post("/iceberg/flush")
-async def iceberg_flush() -> dict[str, Any]:
-    return await engine.flush_iceberg()
 
 
 @app.post("/iceberg/maintain")

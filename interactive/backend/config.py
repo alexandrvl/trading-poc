@@ -65,6 +65,7 @@ class Settings(BaseSettings):
     iceberg_namespace: str = str(_SIM_RAW.get("iceberg", {}).get("namespace", "raw"))
     iceberg_flush_seconds: float = float(_SIM_RAW.get("iceberg", {}).get("flush_seconds", 60))
     iceberg_flush_rows: int = int(_SIM_RAW.get("iceberg", {}).get("flush_rows", 50))
+    dbt_run_every_minutes: float = float(_SIM_RAW.get("dbt", {}).get("run_every_minutes", 1))
     trino_host: str = "localhost"
     trino_port: int = 8082
 

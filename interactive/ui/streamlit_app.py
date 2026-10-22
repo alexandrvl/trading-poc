@@ -18,7 +18,7 @@ st.set_page_config(page_title="Tradic interactive PoC", layout="wide")
 st.title("Tradic interactive PoC")
 st.caption(
     "Generated VPP / forecast / ETRM simulation. Physics knobs live in "
-    "`interactive/config/sim.yaml`. Postgres + Iceberg ingest in one compose."
+    "`interactive/config/sim.yaml`. dbt and Iceberg flush run on a schedule from that file."
 )
 
 
@@ -228,7 +228,9 @@ if events:
 st.header("dbt reports")
 st.write(
     "After a down-regulation, wait until the 15-minute ISP closes (at speed 60 that is ~15 wall seconds), "
-    "then refresh. Open **mart_curtailment_compensation** — lost energy should appear for the curtailed asset."
+    "then wait for the scheduled dbt job (`dbt.run_every_minutes` in sim.yaml). "
+    "Open **mart_curtailment_compensation** — lost energy should appear for the curtailed asset. "
+    "Iceberg appends on `iceberg.flush_seconds` / `iceberg.flush_rows`; there is no manual flush."
 )
 report_names = api("GET", "/reports") or {
     "mart_curtailment_compensation": "information_mart.mart_curtailment_compensation"
@@ -241,24 +243,14 @@ choice = st.selectbox(
     else 0,
     key="report",
 )
-c1, c2, c3 = st.columns(3)
-if c1.button("Refresh reports (dbt run)"):
-    with st.spinner("Running dbt against Postgres…"):
-        result = api("POST", "/dbt/run", json={"full_refresh": False})
-    if result:
-        st.write(result.get("status"), result.get("duration_s"), "s")
-        if result.get("status") != "ok":
-            st.code(result.get("stderr_tail") or result.get("stdout_tail") or "")
-if c2.button("Reload table"):
+if st.button("Reload table"):
     st.rerun()
-if c3.button("Flush Iceberg now"):
-    st.write(api("POST", "/iceberg/flush"))
 
 rows = api("GET", f"/reports/{choice}?limit=200")
 if rows is None:
-    st.warning("No report rows yet. Run dbt after the first ISP settles.")
+    st.warning("No report rows yet. Wait for the scheduled dbt job after the first ISP settles.")
 elif not rows:
-    st.info("Report is empty. Send down-regulation, wait for ISP close, then refresh dbt.")
+    st.info("Report is empty. Send down-regulation, wait for ISP close, then wait for scheduled dbt.")
 else:
     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
