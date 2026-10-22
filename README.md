@@ -106,7 +106,7 @@ curl -sS -X POST http://localhost:8000/iceberg/flush
 curl -sS 'http://localhost:8000/iceberg/telemetry?limit=20'
 ```
 
-Expected when the writer succeeds: flush JSON `"status":"ok"` and `"rows"` > 0 (`telemetry_rows` / `afrr_rows`). `GET /iceberg/telemetry` runs Trino:
+Expected: flush JSON `"status":"ok"` and `"rows"` > 0 (`telemetry_rows` / `afrr_rows`). Start the clock first so the sink has buffered samples. `GET /iceberg/telemetry` runs Trino:
 
 ```sql
 SELECT asset_id, event_ts, active_power_kw, ingested_at
@@ -115,7 +115,7 @@ ORDER BY ingested_at DESC
 LIMIT 20;
 ```
 
-That GET returns those columns. If flush returns `"status":"error"`, GET can be an empty list even though Trino is up — Postgres telemetry is still on `GET /telemetry/history`. Compaction endpoint: `POST /iceberg/maintain`.
+That GET returns at least one row with those columns. Compaction endpoint: `POST /iceberg/maintain`. Postgres telemetry remains on `GET /telemetry/history`.
 
 ### 6. Change a static parameter and see the sim pick it up
 
