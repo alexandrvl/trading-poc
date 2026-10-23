@@ -1,4 +1,4 @@
-# Interactive PoC: Postgres + MinIO + Iceberg catalog (JDBC on Postgres) + Trino + API + UI.
+# Interactive PoC: Postgres + MinIO + Iceberg catalog (JDBC on Postgres) + Trino + API + UI + Superset.
 # One compose path. Do not start trading-dbt/docker-compose.yml at the same time (shared 5433).
 
 services:
@@ -127,6 +127,51 @@ services:
       - --server.address=0.0.0.0
       - --server.port=8501
       - --server.headless=true
+
+  redis:
+    image: redis:7-alpine
+    container_name: trading-poc-redis
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  superset:
+    build:
+      context: ./trading-dbt/superset
+    container_name: trading-poc-superset
+    command: ["bash", "/app/docker/bootstrap.sh"]
+    ports:
+      - "8088:8088"
+    volumes:
+      - ./trading-dbt/superset/live_refresh.py:/app/pythonpath/live_refresh.py:ro
+      - ./trading-dbt/superset/superset_config.py:/app/pythonpath/superset_config.py:ro
+      - ./trading-dbt/superset/bootstrap.sh:/app/docker/bootstrap.sh:ro
+      - ./trading-dbt/superset/bootstrap_bi.py:/app/docker/bootstrap_bi.py:ro
+    environment:
+      SUPERSET_SECRET_KEY: trading-dbt-local-superset-secret-key
+      SUPERSET_METADATA_DB: postgresql+psycopg2://dbt_user:dbt_password@postgres:5432/superset
+      REDIS_URL: redis://redis:6379/0
+      SUPERSET_PORT: "8088"
+      SUPERSET_WAREHOUSE_URI: postgresql+psycopg2://dbt_user:dbt_password@postgres:5432/iceberg_dbt
+      SUPERSET_WAREHOUSE_NAME: Postgres
+      SUPERSET_MART_SCHEMA: information_mart
+      SUPERSET_CHART_CACHE_TIMEOUT: "-1"
+      SUPERSET_DASHBOARD_REFRESH_SECONDS: "60"
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8088/health"]
+      interval: 20s
+      timeout: 10s
+      retries: 20
+      start_period: 120s
 
 volumes:
   interactive_postgres_data:

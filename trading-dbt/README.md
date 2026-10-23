@@ -20,7 +20,7 @@ docker compose logs -f dbt-models
 | PostgreSQL | localhost:5433 | dbt_user / dbt_password, database iceberg_dbt |
 | Superset | http://localhost:8088 | admin / admin |
 
-Superset starts with the rest of the stack. The first boot installs the metadata schema and publishes the **Asset internal billing** dashboard at `/superset/dashboard/asset-internal-billing/`. It reads the three information marts through Trino (`trino://trino@trino:8080/iceberg`). Give the dbt container a few minutes on a cold start; Superset retries the marts for about ten minutes. The dashboard is recreated on each Superset start, so keep layout changes in `superset/bootstrap_bi.py`.
+Superset starts with the rest of the stack. The first boot installs the metadata schema and publishes the **Asset internal billing** dashboard at `/superset/dashboard/asset-internal-billing/`. Chart data is a live query (`cache_timeout` `-1`); the dashboard auto-refreshes every 60 seconds. The lakehouse compose reads the marts through Trino (`trino://trino@trino:8080/iceberg`); the interactive compose points the same dashboard at Postgres `information_mart`. Give dbt a few minutes on a cold start; Superset retries the marts for about ten minutes. The dashboard is recreated on each Superset start, so keep layout changes in `superset/bootstrap_bi.py`.
 
 ```bash
 docker exec -it trading-dbt-trino trino --execute "SELECT asset_id, portfolio_id, interval_start, allocated_revenue_eur, imbalance_cost_eur, net_revenue_eur FROM iceberg.information_mart.mart_asset_internal_billing WHERE interval_start = timestamp '2026-06-01 12:00:00' ORDER BY portfolio_id, asset_id"

@@ -1,5 +1,7 @@
 import os
 
+from live_refresh import CHART_CACHE_TIMEOUT
+
 SECRET_KEY = os.environ["SUPERSET_SECRET_KEY"]
 SQLALCHEMY_DATABASE_URI = os.environ["SUPERSET_METADATA_DB"]
 SQLALCHEMY_ENGINE_OPTIONS = {"pool_pre_ping": True}
@@ -28,10 +30,11 @@ CACHE_CONFIG = {
     "CACHE_REDIS_URL": _redis(0),
     "CACHE_DEFAULT_TIMEOUT": 300,
 }
+# -1 disables chart-data cache so dbt/sim rows are not held for 10 minutes.
 DATA_CACHE_CONFIG = {
     "CACHE_TYPE": "RedisCache",
     "CACHE_REDIS_URL": _redis(1),
-    "CACHE_DEFAULT_TIMEOUT": 600,
+    "CACHE_DEFAULT_TIMEOUT": CHART_CACHE_TIMEOUT,
 }
 FILTER_STATE_CACHE_CONFIG = {
     "CACHE_TYPE": "RedisCache",
@@ -43,3 +46,4 @@ EXPLORE_FORM_DATA_CACHE_CONFIG = {
     "CACHE_REDIS_URL": _redis(3),
     "CACHE_DEFAULT_TIMEOUT": 600,
 }
+NATIVE_FILTER_OPTIONS_CACHE_TIMEOUT = CHART_CACHE_TIMEOUT

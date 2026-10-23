@@ -2,7 +2,7 @@
 
 Interactive electricity-trading proof of concept. Mocked Emsys-like VPP, Meteologica-like forecast ensembles and a thin Periotheus-like ETRM **generate** telemetry, prices, bids and settlements at runtime. Parameters live in `interactive/config/sim.yaml`. Connection secrets stay in environment variables (compose `environment:`), not in the YAML.
 
-The same compose starts **Postgres, MinIO, the Iceberg catalog (JDBC on Postgres), Trino, the API, and the UI**. Do not also start `trading-dbt/docker-compose.yml` — both bind host port **5433**.
+The same compose starts **Postgres, MinIO, the Iceberg catalog (JDBC on Postgres), Trino, the API, the UI, and Superset**. Do not also start `trading-dbt/docker-compose.yml` — both bind host port **5433**.
 
 ## Quick start
 
@@ -17,6 +17,7 @@ docker compose -f docker-compose.interactive.yml up --build
 | PostgreSQL | localhost:5433 | `dbt_user` / `dbt_password`, database `iceberg_dbt` |
 | MinIO | http://localhost:9011 | `minio_user` / `minio_password`, bucket `iceberg-data` |
 | Trino | http://localhost:8082 | Catalog `iceberg`, schema `raw` (`iceberg.namespace` in YAML) |
+| Superset | http://localhost:8088 | `admin` / `admin`; [Asset internal billing](http://localhost:8088/superset/dashboard/asset-internal-billing/) polls every 60s against live Postgres marts |
 
 `GET /health` returns `{"status":"ok"}`. `GET /state` lists generated assets from Postgres (`WT-EE-N-01`, `WT-EE-N-02`, `WT-EE-N-12`, `PV-EE-S-01`, `BESS-EE-01`), `speed_factor` from `clock.default_speed_factor` (60), and `afrr_period_seconds` from `clock.afrr_period_seconds` (4.0).
 

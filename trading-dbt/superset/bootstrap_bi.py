@@ -1,7 +1,8 @@
-"""Publish the Iceberg marts as a Superset dashboard.
+"""Publish the information marts as a Superset dashboard.
 
 Safe to run on every container start: the database, datasets, charts, and
-dashboard are replaced in place.
+dashboard are replaced in place. Chart data is a live query (cache_timeout -1);
+the dashboard polls on DASHBOARD_REFRESH_SECONDS. No REST rebuild.
 """
 
 from __future__ import annotations
@@ -13,12 +14,19 @@ import time
 from flask import g
 from sqlalchemy import text
 
+from live_refresh import (
+    CHART_CACHE_TIMEOUT,
+    DASHBOARD_REFRESH_SECONDS,
+    MART_SCHEMA,
+    WAREHOUSE_NAME,
+    WAREHOUSE_URI,
+)
+
 log = logging.getLogger("bootstrap_bi")
 
-DATABASE_NAME = "Iceberg"
-TRINO_URI = "trino://trino@trino:8080/iceberg"
+DATABASE_NAME = WAREHOUSE_NAME
 DASHBOARD_SLUG = "asset-internal-billing"
-SCHEMA = "information_mart"
+SCHEMA = MART_SCHEMA
 
 DATASETS = {
     "mart_asset_internal_billing": (
@@ -57,7 +65,7 @@ def metric(column: str, label: str, aggregate: str = "SUM") -> dict:
 def wait_for_marts(database) -> None:
     last_error: Exception | None = None
     statement = text(
-        "SELECT count(*) FROM information_mart.mart_asset_internal_billing"
+        f"SELECT count(*) FROM {SCHEMA}.mart_asset_internal_billing"
     )
     for attempt in range(1, 121):
         try:
@@ -81,18 +89,22 @@ def upsert_database(session, database_model):
         session.query(database_model).filter_by(database_name=DATABASE_NAME).one_or_none()
     )
     if database is None:
-        database = database_model(database_name=DATABASE_NAME, sqlalchemy_uri=TRINO_URI)
+        database = database_model(database_name=DATABASE_NAME, sqlalchemy_uri=WAREHOUSE_URI)
         session.add(database)
-    database.sqlalchemy_uri = TRINO_URI
+    database.sqlalchemy_uri = WAREHOUSE_URI
+    database.cache_timeout = CHART_CACHE_TIMEOUT
     database.expose_in_sqllab = True
     database.allow_run_async = False
     database.allow_ctas = False
     database.allow_cvas = False
     database.allow_dml = False
+    engine_params = {}
+    if WAREHOUSE_URI.startswith("trino"):
+        engine_params = {"connect_args": {"source": "superset"}}
     database.extra = json.dumps(
         {
             "metadata_params": {},
-            "engine_params": {"connect_args": {"source": "superset"}},
+            "engine_params": engine_params,
             "metadata_cache_timeout": {},
             "schemas_allowed_for_file_upload": [],
         }
@@ -117,6 +129,7 @@ def upsert_dataset(session, table_model, database, table_name: str, description:
         session.commit()
     dataset.description = description
     dataset.owners = [admin]
+    dataset.cache_timeout = CHART_CACHE_TIMEOUT
     dataset.fetch_metadata()
     for column in dataset.columns:
         if column.column_name in {"interval_start", "interval_end"}:
@@ -178,6 +191,7 @@ def add_chart(session, slice_model, admin, name: str, dataset, viz_type: str, fo
         params="{}",
     )
     chart.owners = [admin]
+    chart.cache_timeout = CHART_CACHE_TIMEOUT
     session.add(chart)
     session.flush()
     form["slice_id"] = chart.id
@@ -427,7 +441,7 @@ def build_dashboard(session, models, admin, datasets):
                     "scope": {"rootPath": ["ROOT_ID"], "excluded": []},
                     "chartsInScope": chart_ids,
                 },
-                "refresh_frequency": 0,
+                "refresh_frequency": DASHBOARD_REFRESH_SECONDS,
                 "timed_refresh_immune_slices": [],
                 "expanded_slices": {},
                 "label_colors": {},

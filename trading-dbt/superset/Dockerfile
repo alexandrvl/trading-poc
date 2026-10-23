@@ -7,6 +7,7 @@ RUN uv pip install --python /app/.venv/bin/python \
         "trino==0.330.0" \
         "psycopg2-binary==2.9.10"
 
+COPY live_refresh.py /app/pythonpath/live_refresh.py
 COPY superset_config.py /app/pythonpath/superset_config.py
 COPY bootstrap.sh /app/docker/bootstrap.sh
 COPY bootstrap_bi.py /app/docker/bootstrap_bi.py
