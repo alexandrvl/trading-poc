@@ -12,7 +12,7 @@ with bridged as (
         b.asset_id,
         i.interval_start,
         coalesce(i.declared_availability_mw, 0) as availability_mw,
-        cast(coalesce(i.afrr_sample_count, 0) as double) as afrr_weight,
+        {{ as_double('coalesce(i.afrr_sample_count, 0)') }} as afrr_weight,
         coalesce(i.fcr_response_kw_sum, 0) as fcr_weight,
         case
             when coalesce(i.outage_status, 'AVAILABLE') = 'AVAILABLE' then 0

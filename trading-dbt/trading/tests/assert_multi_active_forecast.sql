@@ -6,5 +6,5 @@ where (
         from {{ ref('sat_asset_meteologica_forecast') }}
         group by hk_asset, ldts
         having count(*) > 1
-    )
+    ) grouped
 ) = 0

@@ -2,9 +2,9 @@ version: 2
 
 sources:
   - name: raw
-    description: Iceberg landing tables loaded from PostgreSQL.
-    database: iceberg
-    schema: raw
+    description: Landing tables. Iceberg `raw` on Trino, or Postgres `trading` for the interactive PoC.
+    database: "{{ var('raw_database', 'iceberg') }}"
+    schema: "{{ var('raw_schema', 'raw') }}"
     tables:
       - name: assets
         description: Physical generators and storage devices from Emsys and ERP.
@@ -28,3 +28,9 @@ sources:
         description: Portfolio-level aFRR, mFRR, FCR and capacity payments.
       - name: market_prices
         description: Clearing prices used to monetise curtailment.
+      - name: down_regulation_events
+        description: Elering / ETRM down-regulation commands applied to VPP setpoints.
+      - name: afrr_activations
+        description: Thin PICASSO-like aFRR setpoint activations (slowed clock).
+      - name: mfrr_activations
+        description: MARI-style mFRR activations at ISP grain.

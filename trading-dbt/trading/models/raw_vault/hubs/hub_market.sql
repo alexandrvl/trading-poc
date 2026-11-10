@@ -27,7 +27,7 @@ deduped as (
         from source
         where hk_market is not null
           and market_code is not null
-    )
+    ) ranked
     where rn = 1
 )
 

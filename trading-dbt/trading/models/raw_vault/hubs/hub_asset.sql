@@ -27,7 +27,7 @@ deduped as (
         from source
         where hk_asset is not null
           and asset_id is not null
-    )
+    ) ranked
     where rn = 1
 )
 

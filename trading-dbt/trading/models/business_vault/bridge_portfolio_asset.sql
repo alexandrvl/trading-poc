@@ -15,7 +15,7 @@ with effectivity as (
                 order by ldts desc
             ) as rn
         from {{ ref('sat_link_portfolio_asset') }}
-    )
+    ) ranked
     where rn = 1
 )
 

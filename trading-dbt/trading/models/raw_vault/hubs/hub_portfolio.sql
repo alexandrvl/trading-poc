@@ -27,7 +27,7 @@ deduped as (
         from source
         where hk_portfolio is not null
           and portfolio_id is not null
-    )
+    ) ranked
     where rn = 1
 )
 

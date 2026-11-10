@@ -138,6 +138,7 @@ services:
     ports:
       - "8088:8088"
     volumes:
+      - ./superset/live_refresh.py:/app/pythonpath/live_refresh.py:ro
       - ./superset/superset_config.py:/app/pythonpath/superset_config.py:ro
       - ./superset/bootstrap.sh:/app/docker/bootstrap.sh:ro
       - ./superset/bootstrap_bi.py:/app/docker/bootstrap_bi.py:ro
@@ -146,6 +147,8 @@ services:
       SUPERSET_METADATA_DB: postgresql+psycopg2://dbt_user:dbt_password@postgres:5432/superset
       REDIS_URL: redis://redis:6379/0
       SUPERSET_PORT: "8088"
+      SUPERSET_CHART_CACHE_TIMEOUT: "-1"
+      SUPERSET_DASHBOARD_REFRESH_SECONDS: "60"
     depends_on:
       redis:
         condition: service_healthy

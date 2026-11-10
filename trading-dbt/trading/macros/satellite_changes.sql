@@ -16,7 +16,7 @@
                         order by ldts desc
                     ) as rn
                 from {{ this }}
-            )
+            ) ranked
             where rn = 1
         )
         select s.*

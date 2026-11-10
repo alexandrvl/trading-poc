@@ -18,7 +18,7 @@ select
     hk_asset,
     asset_id,
     interval_start,
-    date_add('minute', 15, interval_start) as interval_end,
+    {{ add_minutes('interval_start', 15) }} as interval_end,
     avg(active_power_kw) as avg_active_power_kw,
     avg(reactive_power_kvar) as avg_reactive_power_kvar,
     avg(setpoint_limit_kw) as avg_setpoint_limit_kw,

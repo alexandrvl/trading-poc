@@ -1,10 +1,7 @@
 {{
     config(
         unique_key=['hk_asset', 'ldts', 'type_code', 'target_timestamp'],
-        properties={
-            "format": "'PARQUET'",
-            "partitioning": "ARRAY['day(ldts)']"
-        }
+        properties=iceberg_properties('ldts')
     )
 }}
 

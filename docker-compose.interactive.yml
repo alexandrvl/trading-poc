@@ -1,0 +1,178 @@
+# Interactive PoC: Postgres + MinIO + Iceberg catalog (JDBC on Postgres) + Trino + API + UI + Superset.
+# One compose path. Do not start trading-dbt/docker-compose.yml at the same time (shared 5433).
+
+services:
+  postgres:
+    image: postgres:15
+    container_name: trading-poc-postgres
+    environment:
+      POSTGRES_USER: dbt_user
+      POSTGRES_PASSWORD: dbt_password
+      POSTGRES_DB: iceberg_dbt
+      POSTGRES_HOST_AUTH_METHOD: md5
+      POSTGRES_INITDB_ARGS: "--auth-host=md5 --auth=md5"
+    ports:
+      - "5433:5432"
+    volumes:
+      - interactive_postgres_data:/var/lib/postgresql/data
+      - ./trading-dbt/init-scripts:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dbt_user -d iceberg_dbt"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  minio:
+    image: bitnamilegacy/minio:latest
+    container_name: trading-poc-minio
+    environment:
+      MINIO_ROOT_USER: minio_user
+      MINIO_ROOT_PASSWORD: minio_password
+      MINIO_DEFAULT_BUCKETS: iceberg-data
+      MINIO_BROWSER: "on"
+      MINIO_STARTUP_TIMEOUT: "60"
+    ports:
+      - "9010:9000"
+      - "9011:9001"
+    volumes:
+      - interactive_minio_data:/bitnami/minio/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:9000/minio/health/live"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+
+  trino:
+    image: trinodb/trino:latest
+    container_name: trading-poc-trino
+    ports:
+      - "8082:8080"
+    volumes:
+      - ./trading-dbt/trino/etc:/etc/trino
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/v1/info"]
+      interval: 20s
+      timeout: 10s
+      retries: 15
+
+  backend:
+    build:
+      context: .
+      dockerfile: interactive/Dockerfile
+    container_name: trading-poc-backend
+    environment:
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGUSER: dbt_user
+      PGPASSWORD: dbt_password
+      PGDATABASE: iceberg_dbt
+      DBT_PROJECT_DIR: /opt/trading
+      SCHEMA_SQL: /opt/init-scripts/03-interactive.sql
+      DBT_POSTGRES_HOST: postgres
+      DBT_POSTGRES_PORT: "5432"
+      DBT_POSTGRES_USER: dbt_user
+      DBT_POSTGRES_PASSWORD: dbt_password
+      DBT_POSTGRES_DB: iceberg_dbt
+      DBT_TARGET: postgres
+      SIM_CONFIG: /app/interactive/config/sim.yaml
+      S3_ENDPOINT: minio:9000
+      S3_ACCESS_KEY: minio_user
+      S3_SECRET_KEY: minio_password
+      S3_BUCKET: iceberg-data
+      S3_REGION: eu-central-1
+      ICEBERG_ENABLED: "true"
+      TRINO_HOST: trino
+      TRINO_PORT: "8080"
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./interactive:/app/interactive
+      - ./trading-dbt/trading:/opt/trading
+      - ./trading-dbt/init-scripts:/opt/init-scripts
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    command: ["uvicorn", "interactive.backend.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  ui:
+    build:
+      context: .
+      dockerfile: interactive/Dockerfile
+    container_name: trading-poc-ui
+    environment:
+      TRADING_API_URL: http://backend:8000
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./interactive:/app/interactive
+    depends_on:
+      backend:
+        condition: service_healthy
+    command:
+      - streamlit
+      - run
+      - interactive/ui/streamlit_app.py
+      - --server.address=0.0.0.0
+      - --server.port=8501
+      - --server.headless=true
+
+  redis:
+    image: redis:7-alpine
+    container_name: trading-poc-redis
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  superset:
+    build:
+      context: ./trading-dbt/superset
+    container_name: trading-poc-superset
+    command: ["bash", "/app/docker/bootstrap.sh"]
+    ports:
+      - "8088:8088"
+    volumes:
+      - ./trading-dbt/superset/live_refresh.py:/app/pythonpath/live_refresh.py:ro
+      - ./trading-dbt/superset/superset_config.py:/app/pythonpath/superset_config.py:ro
+      - ./trading-dbt/superset/bootstrap.sh:/app/docker/bootstrap.sh:ro
+      - ./trading-dbt/superset/bootstrap_bi.py:/app/docker/bootstrap_bi.py:ro
+    environment:
+      SUPERSET_SECRET_KEY: trading-dbt-local-superset-secret-key
+      SUPERSET_METADATA_DB: postgresql+psycopg2://dbt_user:dbt_password@postgres:5432/superset
+      REDIS_URL: redis://redis:6379/0
+      SUPERSET_PORT: "8088"
+      SUPERSET_WAREHOUSE_URI: postgresql+psycopg2://dbt_user:dbt_password@postgres:5432/iceberg_dbt
+      SUPERSET_WAREHOUSE_NAME: Postgres
+      SUPERSET_MART_SCHEMA: information_mart
+      SUPERSET_CHART_CACHE_TIMEOUT: "-1"
+      SUPERSET_DASHBOARD_REFRESH_SECONDS: "60"
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8088/health"]
+      interval: 20s
+      timeout: 10s
+      retries: 20
+      start_period: 120s
+
+volumes:
+  interactive_postgres_data:
+  interactive_minio_data:

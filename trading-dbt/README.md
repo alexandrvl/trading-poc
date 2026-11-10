@@ -1,6 +1,8 @@
 # Electricity trading Data Vault
 
-dbt project for asset-level electricity billing on Trino and Apache Iceberg. Portfolio trades from Periotheus are split onto Emsys assets, with Meteologica forecasts used for imbalance attribution and curtailment.
+dbt project for asset-level electricity billing. The original stack is Trino and Apache Iceberg. The **interactive PoC** runs the same models on PostgreSQL and also starts MinIO + Trino for live Iceberg append — from the repo root: `docker compose -f docker-compose.interactive.yml up --build` (see the root README). Do not run this lakehouse compose and the interactive compose at the same time; both bind Postgres to host port 5433.
+
+Portfolio trades from Periotheus are split onto Emsys assets, with Meteologica forecasts used for imbalance attribution and curtailment.
 
 The loader and local stack follow [iceberg-dbt-etl](https://github.com/alexandrvl/iceberg-dbt-etl).
 
@@ -18,7 +20,7 @@ docker compose logs -f dbt-models
 | PostgreSQL | localhost:5433 | dbt_user / dbt_password, database iceberg_dbt |
 | Superset | http://localhost:8088 | admin / admin |
 
-Superset starts with the rest of the stack. The first boot installs the metadata schema and publishes the **Asset internal billing** dashboard at `/superset/dashboard/asset-internal-billing/`. It reads the three information marts through Trino (`trino://trino@trino:8080/iceberg`). Give the dbt container a few minutes on a cold start; Superset retries the marts for about ten minutes. The dashboard is recreated on each Superset start, so keep layout changes in `superset/bootstrap_bi.py`.
+Superset starts with the rest of the stack. The first boot installs the metadata schema and publishes the **Asset internal billing** dashboard at `/superset/dashboard/asset-internal-billing/`. Chart data is a live query (`cache_timeout` `-1`); the dashboard auto-refreshes every 60 seconds. The lakehouse compose reads the marts through Trino (`trino://trino@trino:8080/iceberg`); the interactive compose points the same dashboard at Postgres `information_mart`. Give dbt a few minutes on a cold start; Superset retries the marts for about ten minutes. The dashboard is recreated on each Superset start, so keep layout changes in `superset/bootstrap_bi.py`.
 
 ```bash
 docker exec -it trading-dbt-trino trino --execute "SELECT asset_id, portfolio_id, interval_start, allocated_revenue_eur, imbalance_cost_eur, net_revenue_eur FROM iceberg.information_mart.mart_asset_internal_billing WHERE interval_start = timestamp '2026-06-01 12:00:00' ORDER BY portfolio_id, asset_id"
@@ -116,6 +118,14 @@ From the host, with Trino already on port 8082:
 ```bash
 cd trading
 dbt run --select staging raw_vault business_vault information_mart
+```
+
+Against the interactive Postgres (host port 5433):
+
+```bash
+cd trading
+DBT_TARGET=postgres dbt run --select staging raw_vault business_vault information_mart --target postgres \
+  --vars '{raw_database: iceberg_dbt, raw_schema: trading, trino_table_type: ""}'
 ```
 
 ## Project layout
